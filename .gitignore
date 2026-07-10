@@ -1,0 +1,13 @@
+# local note storage (fs store)
+/api/data/
+data/
+
+# built binaries
+/api/note-api
+/api/notems
+note-api
+notems
+*.exe
+
+# OS / editor cruft
+.DS_Store
