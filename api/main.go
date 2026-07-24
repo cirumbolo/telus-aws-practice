@@ -22,10 +22,18 @@ func getenv(key, def string) string {
 // changes to the handlers.
 func newStore() (Store, error) {
 	backend := getenv("STORE", "fs")
-	if backend == "s3" || os.Getenv("NOTES_BUCKET") != "" {
-		return nil, fmt.Errorf("s3 store not yet implemented (set STORE=fs for local dev)")
+	// NOTES_BUCKET implies the S3 backend even if STORE is unset.
+	if os.Getenv("NOTES_BUCKET") != "" {
+		backend = "s3"
 	}
-	return NewFSStore(getenv("NOTES_DIR", "./data"))
+	switch backend {
+	case "fs":
+		return NewFSStore(getenv("NOTES_DIR", "./data"))
+	case "s3":
+		return nil, fmt.Errorf("s3 store not yet implemented (set STORE=fs for local dev)")
+	default:
+		return nil, fmt.Errorf("unknown STORE %q (want fs or s3)", backend)
+	}
 }
 
 const slugChars = "abcdefghijklmnopqrstuvwxyz0123456789"

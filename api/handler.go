@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -95,7 +95,7 @@ func (a *API) serveApp(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	http.ServeFile(w, r, path.Join(a.webDir, "index.html"))
+	http.ServeFile(w, r, filepath.Join(a.webDir, "index.html"))
 }
 
 // withCORS is a no-op when allowOrigin is empty (local, same-origin). When set
