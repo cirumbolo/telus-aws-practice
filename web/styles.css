@@ -1,0 +1,24 @@
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+#pad {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  outline: 0;
+  resize: none;
+  padding: 1rem;
+  box-sizing: border-box;
+  font: 16px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: #fff;
+  color: #111;
+}
+
+@media (prefers-color-scheme: dark) {
+  #pad {
+    background: #1a1a1a;
+    color: #eaeaea;
+  }
+}
