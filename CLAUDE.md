@@ -20,7 +20,7 @@ Two tiers: a static frontend on S3, and a Go JSON API on EC2 backed by a second
 ```
 Browser
   ├─ GET  S3 static site  (index.html + app.js + styles.css)      ← frontend
-  └─ JS calls EC2 API (JSON over HTTPS):
+  └─ JS calls EC2 API (JSON over HTTP — see note below):
        GET /notes/{slug}   → { "text": "..." }   (200; missing key → 200 empty text)
        PUT /notes/{slug}   ← { "text": "..." }   (upsert; debounced auto-save)
 
@@ -30,6 +30,10 @@ EC2 (Go net/http) ──IAM instance role──▶ S3 notes bucket: notes/{slug}
 - **Frontend bucket:** static-website hosting (front with CloudFront + OAC later).
 - **Notes bucket:** **private** — only the EC2 instance role may read/write it.
 - **CORS:** the notes API must allow the S3 site's origin.
+- **HTTP, not HTTPS:** S3 website endpoints are HTTP-only. An HTTP page calling
+  an HTTP API is not mixed content, so this works. Putting CloudFront (HTTPS) in
+  front of S3 while the API stays HTTP *is* active mixed content and is
+  hard-blocked by browsers — see the phase-2 note in `infra/DEPLOY.md`.
 
 ### Tradeoff to keep in mind
 S3 has no locking or transactions. That's fine for a single-editor-per-note pad, but
@@ -39,21 +43,24 @@ concurrent editing is ever needed, move the note store to DynamoDB — the API's
 
 ## Repository layout
 
-> **Planned, not yet created.** The repo currently holds only `README.md` + `LICENSE`.
-> This is the target structure to build toward.
-
 ```
 /api/            Go API server
-  main.go        wiring, config from env, http.Server
+  main.go        wiring, config from env, backend selection, http.Server
   handler.go     GET/PUT /notes/{slug}, slug validation, CORS
-  store.go       S3 get/put wrapper (aws-sdk-go-v2) — swap here for DynamoDB
+  store.go       Store interface + ErrNotFound — the persistence seam
+  store_fs.go    filesystem backend (local dev): data/{slug}.txt
+  store_s3.go    S3 backend (aws-sdk-go-v2): notes/{slug}.txt
+  *_test.go      handler contract, FSStore, and S3Store error-mapping tests
 /web/            Static frontend (deployed to the S3 site bucket)
   index.html     the pad (single <textarea>)
-  app.js         load-on-open + debounced auto-save (fetch)
+  app.js         load-on-open + debounced auto-save (fetch); API_BASE seam
   styles.css     minimalist, full-viewport textarea
-/infra/          IaC / provisioning notes (Terraform or CloudFormation + IAM policies)
+/infra/          DEPLOY.md — AWS console walkthrough (no IaC yet)
 README.md
 ```
+
+Adding a backend means implementing `Store` and wiring it into `newStore` in
+`main.go`; handlers never change. DynamoDB would slot in the same way.
 
 ## Conventions
 
@@ -61,8 +68,18 @@ README.md
   prevents S3 key injection / path traversal via the slug. Root `/` → redirect to a
   random valid slug.
 - **Note size cap:** enforce a max request body on `PUT` (e.g. 100 KB).
-- **Empty/missing note:** treat S3 `NoSuchKey` as an empty note — return `200` with
-  `{"text": ""}`, not a `404`/error. A brand-new pad is a normal case.
+- **Empty/missing note:** a missing note is an empty note — return `200` with
+  `{"text": ""}`, not a `404`/error. A brand-new pad is a normal case. Every
+  backend maps "missing" to `ErrNotFound` and the handler does the rest.
+- **Missing objects in S3 — `NoSuchKey` vs `AccessDenied`:** S3 only returns
+  `NoSuchKey` when the caller has `s3:ListBucket`. Without it, a missing object
+  comes back as **`AccessDenied`**, because S3 deliberately hides existence from
+  callers that can't list. Our least-privilege instance role grants only
+  `s3:GetObject`/`s3:PutObject` on `notes/*`, so `AccessDenied` is the branch
+  that fires in production — matching only `NoSuchKey` would turn every fresh
+  pad into a `500`. `isNotFound` in `store_s3.go` handles both, and logs a
+  warning on the `AccessDenied` path so a genuinely broken IAM policy (which
+  otherwise presents as "every note is blank") stays visible in `journalctl`.
 - **Go:** standard-library `net/http` + `aws-sdk-go-v2`; ships as a single static
   binary. Keep responses small JSON.
 - **Secrets & config:** never hardcode AWS credentials. On EC2 use the **IAM instance
@@ -90,8 +107,18 @@ URL at the local Go server.
 - **S3:** one **private** notes bucket; one static-website frontend bucket (configure
   Block Public Access appropriately, or front it with CloudFront + Origin Access
   Control).
+- **Frontend asset layout:** `index.html` references `/static/styles.css` and
+  `/static/app.js`, which resolve locally via the Go server's `/static/` route.
+  The S3 bucket must mirror that — upload the assets under a `static/` prefix,
+  not flat, or the page loads unstyled with a dead script.
+- **`API_BASE`:** stays `""` in git (same-origin local dev). The EC2 address is
+  set only in the copy of `app.js` uploaded to S3, so an environment-specific IP
+  never lands in version history.
 - **Scaling later:** DynamoDB for concurrent editing; ALB + multiple instances or an
   Auto Scaling Group if the single instance isn't enough.
+
+Full console walkthrough, with verification checkpoints and a failure-mode
+table: [`infra/DEPLOY.md`](infra/DEPLOY.md).
 
 ## Verification (end-to-end, once code exists)
 
