@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/rand/v2"
@@ -16,21 +17,25 @@ func getenv(key, def string) string {
 	return def
 }
 
-// newStore selects the persistence backend from the environment — the only
-// place backend selection happens. The S3 branch is a documented seam: it is
-// activated later by implementing NewS3Store and returning it here, with no
-// changes to the handlers.
-func newStore() (Store, error) {
-	backend := getenv("STORE", "fs")
-	// NOTES_BUCKET implies the S3 backend even if STORE is unset.
+// resolveBackend reports which persistence backend the environment selects.
+// NOTES_BUCKET implies s3 even if STORE is unset, so a bucket in the
+// environment is never silently ignored.
+func resolveBackend() string {
 	if os.Getenv("NOTES_BUCKET") != "" {
-		backend = "s3"
+		return "s3"
 	}
+	return getenv("STORE", "fs")
+}
+
+// newStore builds the backend named by resolveBackend — the only place backend
+// selection happens. Handlers depend on the Store interface, so swapping
+// filesystem for S3 changes nothing above this function.
+func newStore(ctx context.Context, backend string) (Store, error) {
 	switch backend {
 	case "fs":
 		return NewFSStore(getenv("NOTES_DIR", "./data"))
 	case "s3":
-		return nil, fmt.Errorf("s3 store not yet implemented (set STORE=fs for local dev)")
+		return NewS3Store(ctx, os.Getenv("NOTES_BUCKET"))
 	default:
 		return nil, fmt.Errorf("unknown STORE %q (want fs or s3)", backend)
 	}
@@ -51,7 +56,8 @@ func randomSlug(n int) string {
 }
 
 func main() {
-	store, err := newStore()
+	backend := resolveBackend()
+	store, err := newStore(context.Background(), backend)
 	if err != nil {
 		log.Fatalf("store init: %v", err)
 	}
@@ -69,7 +75,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("listening on %s (store=%s)", addr, getenv("STORE", "fs"))
+	log.Printf("listening on %s (store=%s)", addr, backend)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
