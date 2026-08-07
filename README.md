@@ -39,8 +39,10 @@ single origin.
 | Variable       | Default   | Purpose                                              |
 | -------------- | --------- | ---------------------------------------------------- |
 | `PORT`         | `8080`    | Port the server listens on.                          |
-| `STORE`        | `fs`      | Backend selection. `s3` is a future seam (see below).|
+| `STORE`        | `fs`      | Backend selection: `fs` or `s3`. Unknown values are rejected. |
 | `NOTES_DIR`    | `./data`  | Directory for the filesystem store.                  |
+| `NOTES_BUCKET` | *(unset)* | S3 bucket for the `s3` store. Setting it selects `s3` regardless of `STORE`. |
+| `AWS_REGION`   | *(unset)* | Region for the `s3` store (or take it from the AWS profile). |
 | `WEB_DIR`      | `../web`  | Directory holding `index.html` + static assets.      |
 | `ALLOW_ORIGIN` | *(unset)* | Enables CORS for a given origin (for a two-origin/S3 deployment). Left unset locally. |
 
@@ -50,9 +52,24 @@ Example:
 PORT=9000 NOTES_DIR=/tmp/notes go run .
 ```
 
-Setting `STORE=s3` (or `NOTES_BUCKET`) currently exits with "s3 store not yet
-implemented" — the S3 backend is a documented seam, not built for the local
-phase.
+## Running against S3
+
+The `s3` backend stores notes as `notes/{slug}.txt` in a private bucket. It uses
+the default AWS credential chain, so the same binary works locally with a profile
+and on EC2 with an instance role — no code difference:
+
+```bash
+cd api
+AWS_PROFILE=<profile> AWS_REGION=<region> NOTES_BUCKET=<bucket> go run .
+# → listening on :8080 (store=s3)
+```
+
+The API behaves identically to the filesystem backend, so the curl checks below
+apply unchanged. See [`infra/DEPLOY.md`](infra/DEPLOY.md) for the full AWS
+(EC2 + S3) deployment walkthrough.
+
+`aws-sdk-go-v2` is the module's only external dependency; everything else is
+standard library.
 
 ## API
 
