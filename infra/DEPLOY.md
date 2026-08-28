@@ -293,8 +293,79 @@ rejected (400) ✓
 | Worked yesterday, dead today | Public IP changed on stop/start — use an Elastic IP |
 | Bucket policy won't save | Block Public Access still on for the web bucket |
 | Unstyled page, no saving | Assets not under the `static/` prefix |
+| `ssh: connect ... port 22: Operation timed out`, but port 8080 works fine from the same machine | Your current public IP doesn't match the SSH rule's source — re-check with `curl -s https://checkip.amazonaws.com` and update the rule (common after switching networks) |
+| Browser blocked with a proxy "Web Page Blocked" page, or a port hangs only on one network | Corporate/office network blocking non-standard outbound ports — retry from a phone hotspot or home network |
 
 ---
+
+## Cost safety net — AWS Budgets stop action
+
+Given this is a learning/cert-practice account, add a budget with an
+**action**, not just an alert, so a forgotten running instance can't run up a
+bill unattended:
+
+1. IAM → Roles → Create role → **Custom trust policy**:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Principal": { "Service": "budgets.amazonaws.com" },
+       "Action": "sts:AssumeRole"
+     }]
+   }
+   ```
+   Attach a permissions policy allowing `ec2:StopInstances` and
+   `ec2:DescribeInstances`. Name it e.g. `BudgetsStopEC2Role`.
+2. Billing → Budgets → create a budget (e.g. $1 fixed) → add an **action** →
+   Target = EC2 instances (running) → Action = Stop → role =
+   `BudgetsStopEC2Role`. Also add an email alert on the same threshold.
+
+Caveats to know going in — this is a backstop, not a hard cap:
+- Budgets evaluates spend a few times a day, not in real time — you can exceed
+  the threshold before it fires.
+- It only stops EC2/RDS compute. It does **not** touch S3 storage/request
+  charges, and a stopped instance's EBS volume keeps billing until terminated.
+- **The only thing that guarantees $0 ongoing cost is manually terminating the
+  EC2 instance and deleting the buckets when you're done for the session** —
+  treat the budget action as a safety net for "I forgot", not a substitute for
+  tearing down.
+
+## Worked example — one completed deployment (2026-08-28, us-east-2)
+
+Kept here as a shape-of-the-thing reference; real bucket names, IPs, and IDs
+from that run are deliberately omitted since bucket names are effectively
+public identifiers once written down and the notes bucket is meant to stay
+obscure. Use your own values — don't reuse someone else's bucket names.
+
+| Item | Value |
+| ---- | ----- |
+| Region | `us-east-2` (Ohio) — **dot-form** website endpoint, not dash-form |
+| Notes bucket (private) | *(project-specific — keep out of docs/commits)* |
+| Web bucket (public, static site) | *(project-specific; fine to share since it's public)* |
+| Website endpoint | `http://<web-bucket>.s3-website.us-east-2.amazonaws.com` |
+| Instance type | `t3.micro` → `GOARCH=amd64` |
+| IAM policy | `NoteMSNotesBucketRW` |
+| IAM instance role | *(project-specific role name)* |
+| Security group | *(project-specific security group)* |
+
+**Gotcha hit during this run: SSH timeout from a *different* network than the
+one used to create the security group.** The inbound SSH rule was scoped to
+the IP address captured at SG-creation time. Testing later from a different
+network (home vs. office) presented a different public IP, so port 22 timed
+out while port 8080 (open to `0.0.0.0/0`) kept working fine from the same
+machine — the asymmetry between "one port works, one doesn't, same source" is
+the tell. Fix: re-check your current public IP (`curl -s
+https://checkip.amazonaws.com`) and update the SSH rule's source to match (or
+use the console's "My IP" button) whenever you switch networks. Network ACLs
+were *not* the cause here — the subnet NACL was left at its default allow-all,
+so that's usually not worth checking first.
+
+Corporate/office networks may also transparently block or intercept outbound
+traffic to non-standard ports entirely (seen here as an HTTP proxy block page
+on port 8080, and a bare connection timeout on port 22) — if a browser test or
+SSH hangs or gets intercepted only on one network, retry from a phone hotspot
+or home connection before assuming the AWS-side config is wrong.
 
 ## Phase 2 (optional) — CloudFront, two origins
 
