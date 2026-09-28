@@ -290,7 +290,7 @@ rejected (400) ✓
 | CORS error in browser, `curl` fine | `ALLOW_ORIGIN` trailing slash or scheme mismatch |
 | `PermanentRedirect` / `BucketRegionError` | Region mismatch between bucket and `AWS_REGION` |
 | Browser hangs, works over SSH | Security group missing 8080 inbound |
-| Worked yesterday, dead today | Public IP changed on stop/start — use an Elastic IP |
+| Worked yesterday, dead today | Public IP changed on stop/start — use an Elastic IP (as of 2026-09-28 this instance has one: `18.190.214.116`, so this shouldn't recur unless the EIP is released) |
 | Bucket policy won't save | Block Public Access still on for the web bucket |
 | Unstyled page, no saving | Assets not under the `static/` prefix |
 | `ssh: connect ... port 22: Operation timed out`, but port 8080 works fine from the same machine | Your current public IP doesn't match the SSH rule's source — re-check with `curl -s https://checkip.amazonaws.com` and update the rule (common after switching networks) |
@@ -376,25 +376,32 @@ type used so far — change this if a future instance is arm64/`t4g.*`), scp's
 the binary over, and restarts the systemd service via SSH, finishing with a
 curl health check against the running service.
 
-### One-time setup before the first automated deploy
+### One-time setup before the first automated deploy — done (2026-09-28)
 
-1. **Allocate an Elastic IP and associate it with the instance.** Without
-   this, every stop/start changes the public IP, which silently breaks the
-   `EC2_HOST` secret below — the exact stale-IP failure mode hit manually
-   during today's session, just moved from the local SSH command to CI.
-2. **Widen (or add a second) SSH inbound rule for GitHub-hosted runners.**
-   GitHub Actions runners don't have a stable IP, so the existing "my IP
-   only" SSH rule won't admit them. Two options, pick one:
-   - Add a second inbound rule on port 22 sourced from GitHub's [published
-     Actions IP ranges](https://api.github.com/meta) (`actions` key) — more
-     correct, needs periodic updates since the ranges rotate.
-   - Simpler and adequate for a lab account: open port 22 to `0.0.0.0/0` and
-     rely on key-based auth only (no password auth, which the AMI already
-     enforces). Acceptable here because this is a low-value learning
-     instance, not a production system — reconsider for anything real.
-3. **Add three repo secrets** (Settings → Secrets and variables → Actions):
-   - `EC2_HOST` — the Elastic IP from step 1
-   - `EC2_SSH_KEY` — full contents of the `.pem` private key used to SSH in
+1. **Elastic IP allocated and associated** with the instance — currently
+   `18.190.214.116`. Without this, every stop/start changes the public IP,
+   which silently breaks the `EC2_HOST` secret below — the exact stale-IP
+   failure mode hit manually earlier in that session, just moved from the
+   local SSH command to CI. An EIP stays associated with a *stopped*
+   instance too, so powering the instance off between uses no longer
+   requires touching this secret.
+2. **SSH inbound rule widened to `0.0.0.0/0` on port 22.** GitHub Actions
+   runners don't have a stable IP, so the previous "my IP only" rule
+   couldn't admit them. Chose the simpler option over maintaining GitHub's
+   rotating [Actions IP ranges](https://api.github.com/meta) — acceptable
+   here since this is a low-value lab instance and password auth stays
+   disabled (key-only). Reconsider for anything real.
+3. **New dedicated CI key pair generated** (`~/.ssh/notes_ci_deploy`,
+   ed25519, no passphrase) — the original `NotesTeacherKeyPair` private key
+   was lost (never saved to this machine), discovered when manual SSH
+   auth failed. The new public key was appended to `ec2-user`'s
+   `~/.ssh/authorized_keys` via a temporary EC2 Instance Connect session
+   (doesn't require the lost key), so it persists across reboots
+   independent of the original key pair.
+4. **Repo secrets set** (`gh secret set`, not the console, but equivalent):
+   - `EC2_HOST` = `18.190.214.116`
+   - `EC2_SSH_KEY` = contents of `~/.ssh/notes_ci_deploy` (the new CI key,
+     not the original `.pem`)
    - (the SSH user is hardcoded as `ec2-user` in the workflow, matching
      Amazon Linux — no secret needed for it)
 
