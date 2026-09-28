@@ -17,6 +17,7 @@ import (
 type fakeS3 struct {
 	objects map[string]string
 	getErr  error
+	putErr  error
 
 	// last PutObject call, for asserting key layout and content type.
 	putKey         string
@@ -38,6 +39,9 @@ func (f *fakeS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*
 }
 
 func (f *fakeS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	if f.putErr != nil {
+		return nil, f.putErr
+	}
 	b, err := io.ReadAll(in.Body)
 	if err != nil {
 		return nil, err
@@ -127,5 +131,17 @@ func TestS3StoreGetRealErrorNotSwallowed(t *testing.T) {
 	}
 	if errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want a real error rather than ErrNotFound", err)
+	}
+}
+
+// Put must propagate a genuine failure rather than swallow it, or a save
+// that silently didn't happen looks identical to success.
+func TestS3StorePutPropagatesError(t *testing.T) {
+	store, fake := newTestS3Store()
+	fake.putErr = &smithy.GenericAPIError{Code: "InternalError", Message: "boom"}
+
+	err := store.Put(context.Background(), "abc12", "hello s3")
+	if err == nil {
+		t.Fatal("Put err = nil, want a non-nil error")
 	}
 }
