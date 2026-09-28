@@ -18,7 +18,7 @@ type FSStore struct {
 // NewFSStore creates the data directory if needed and returns a store rooted at
 // it.
 func NewFSStore(dir string) (*FSStore, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
 	return &FSStore{dir: dir}, nil
@@ -32,7 +32,7 @@ func (s *FSStore) path(slug string) string {
 }
 
 func (s *FSStore) Get(_ context.Context, slug string) (string, error) {
-	b, err := os.ReadFile(s.path(slug))
+	b, err := os.ReadFile(s.path(slug)) // #nosec G703 -- slug is regex-validated (^[a-zA-Z0-9_-]{1,64}$) before it reaches the store; path cannot escape s.dir
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", ErrNotFound
 	}
@@ -43,5 +43,5 @@ func (s *FSStore) Get(_ context.Context, slug string) (string, error) {
 }
 
 func (s *FSStore) Put(_ context.Context, slug, text string) error {
-	return os.WriteFile(s.path(slug), []byte(text), 0o644)
+	return os.WriteFile(s.path(slug), []byte(text), 0o600) // #nosec G703 -- slug is regex-validated (^[a-zA-Z0-9_-]{1,64}$) before it reaches the store; path cannot escape s.dir
 }

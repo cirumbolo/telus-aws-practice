@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -51,5 +53,21 @@ func TestFSStoreOverwrite(t *testing.T) {
 	got, _ := s.Get(ctx, "k")
 	if got != "second" {
 		t.Fatalf("Get after overwrite = %q, want %q", got, "second")
+	}
+}
+
+// A regular file can't have children, so os.MkdirAll on a path beneath it
+// fails — this is how we reach NewFSStore's error branch without needing
+// permission tricks.
+func TestNewFSStoreMkdirFailure(t *testing.T) {
+	base := t.TempDir()
+	blocker := filepath.Join(base, "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatalf("setup WriteFile: %v", err)
+	}
+
+	_, err := NewFSStore(filepath.Join(blocker, "data"))
+	if err == nil {
+		t.Fatal("NewFSStore err = nil, want an error")
 	}
 }

@@ -50,7 +50,7 @@ const slugChars = "abcdefghijklmnopqrstuvwxyz0123456789"
 func randomSlug(n int) string {
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = slugChars[rand.IntN(len(slugChars))]
+		b[i] = slugChars[rand.IntN(len(slugChars))] // #nosec G404 -- unpredictability isn't a security property here; notes are public-by-URL by design
 	}
 	return string(b)
 }
