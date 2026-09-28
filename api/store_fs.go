@@ -45,3 +45,18 @@ func (s *FSStore) Get(_ context.Context, slug string) (string, error) {
 func (s *FSStore) Put(_ context.Context, slug, text string) error {
 	return os.WriteFile(s.path(slug), []byte(text), 0o600) // #nosec G703 -- slug is regex-validated (^[a-zA-Z0-9_-]{1,64}$) before it reaches the store; path cannot escape s.dir
 }
+
+func (s *FSStore) Rename(_ context.Context, oldSlug, newSlug string) error {
+	if _, err := os.Stat(s.path(newSlug)); err == nil { // #nosec G703 -- slug is regex-validated (^[a-zA-Z0-9_-]{1,64}$) before it reaches the store; path cannot escape s.dir
+		return ErrAlreadyExists
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(s.path(oldSlug), s.path(newSlug)); err != nil { // #nosec G703 -- slug is regex-validated (^[a-zA-Z0-9_-]{1,64}$) before it reaches the store; path cannot escape s.dir
+		if errors.Is(err, fs.ErrNotExist) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}

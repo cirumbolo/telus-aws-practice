@@ -15,9 +15,11 @@ import (
 // fakeS3 implements s3API without touching the network. getErr, when set, is
 // returned from GetObject so the error-mapping paths can be exercised.
 type fakeS3 struct {
-	objects map[string]string
-	getErr  error
-	putErr  error
+	objects   map[string]string
+	getErr    error
+	putErr    error
+	copyErr   error
+	deleteErr error
 
 	// last PutObject call, for asserting key layout and content type.
 	putKey         string
@@ -53,6 +55,28 @@ func (f *fakeS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*
 	}
 	f.objects[*in.Key] = string(b)
 	return &s3.PutObjectOutput{}, nil
+}
+
+func (f *fakeS3) CopyObject(_ context.Context, in *s3.CopyObjectInput, _ ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	if f.copyErr != nil {
+		return nil, f.copyErr
+	}
+	// CopySource is "bucket/key"; strip the bucket prefix to find the source key.
+	srcKey := (*in.CopySource)[strings.Index(*in.CopySource, "/")+1:]
+	body, ok := f.objects[srcKey]
+	if !ok {
+		return nil, &types.NoSuchKey{}
+	}
+	f.objects[*in.Key] = body
+	return &s3.CopyObjectOutput{}, nil
+}
+
+func (f *fakeS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	if f.deleteErr != nil {
+		return nil, f.deleteErr
+	}
+	delete(f.objects, *in.Key)
+	return &s3.DeleteObjectOutput{}, nil
 }
 
 func newTestS3Store() (*S3Store, *fakeS3) {
@@ -143,5 +167,70 @@ func TestS3StorePutPropagatesError(t *testing.T) {
 	err := store.Put(context.Background(), "abc12", "hello s3")
 	if err == nil {
 		t.Fatal("Put err = nil, want a non-nil error")
+	}
+}
+
+func TestS3StoreRenameMovesContent(t *testing.T) {
+	store, _ := newTestS3Store()
+	ctx := context.Background()
+	if err := store.Put(ctx, "old", "hello s3"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if err := store.Rename(ctx, "old", "new"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+
+	got, err := store.Get(ctx, "new")
+	if err != nil {
+		t.Fatalf("Get(new): %v", err)
+	}
+	if got != "hello s3" {
+		t.Fatalf("Get(new) = %q, want %q", got, "hello s3")
+	}
+	if _, err := store.Get(ctx, "old"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get(old) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestS3StoreRenameMissingSourceErrors(t *testing.T) {
+	store, _ := newTestS3Store()
+	err := store.Rename(context.Background(), "nope", "new")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Rename err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestS3StoreRenameExistingDestinationErrors(t *testing.T) {
+	store, _ := newTestS3Store()
+	ctx := context.Background()
+	if err := store.Put(ctx, "old", "hello s3"); err != nil {
+		t.Fatalf("Put(old): %v", err)
+	}
+	if err := store.Put(ctx, "new", "already here"); err != nil {
+		t.Fatalf("Put(new): %v", err)
+	}
+
+	err := store.Rename(ctx, "old", "new")
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("Rename err = %v, want ErrAlreadyExists", err)
+	}
+	got, _ := store.Get(ctx, "new")
+	if got != "already here" {
+		t.Fatalf("Get(new) after rejected rename = %q, want unchanged %q", got, "already here")
+	}
+}
+
+func TestS3StoreRenameDeletePropagatesError(t *testing.T) {
+	store, fake := newTestS3Store()
+	ctx := context.Background()
+	if err := store.Put(ctx, "old", "hello s3"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	fake.deleteErr = &smithy.GenericAPIError{Code: "InternalError", Message: "boom"}
+
+	err := store.Rename(ctx, "old", "new")
+	if err == nil {
+		t.Fatal("Rename err = nil, want a non-nil error")
 	}
 }

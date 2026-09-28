@@ -11,6 +11,10 @@ import (
 // this way so the API behaves identically regardless of the store.
 var ErrNotFound = errors.New("note not found")
 
+// ErrAlreadyExists is returned by Store.Rename when the destination slug
+// already has content. Renaming never overwrites another note silently.
+var ErrAlreadyExists = errors.New("note already exists")
+
 // Store is the note-persistence seam. Swapping backends (filesystem now, S3 or
 // DynamoDB later) means adding an implementation of this interface and wiring
 // it in newStore — handler code never changes.
@@ -21,4 +25,7 @@ var ErrNotFound = errors.New("note not found")
 type Store interface {
 	Get(ctx context.Context, slug string) (string, error)
 	Put(ctx context.Context, slug, text string) error
+	// Rename moves a note from oldSlug to newSlug. It returns ErrNotFound if
+	// oldSlug has no note, or ErrAlreadyExists if newSlug already does.
+	Rename(ctx context.Context, oldSlug, newSlug string) error
 }

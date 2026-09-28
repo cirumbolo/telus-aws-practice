@@ -21,6 +21,8 @@ import (
 type s3API interface {
 	GetObject(ctx context.Context, in *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	PutObject(ctx context.Context, in *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	CopyObject(ctx context.Context, in *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
+	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
 // S3Store persists notes as objects at notes/{slug}.txt in a single private
@@ -82,6 +84,43 @@ func (s *S3Store) Put(ctx context.Context, slug, text string) error {
 		Key:         aws.String(s.key(slug)),
 		Body:        strings.NewReader(text),
 		ContentType: aws.String("text/plain; charset=utf-8"),
+	})
+	return err
+}
+
+// Rename moves a note by copying it to newSlug then deleting oldSlug — S3 has
+// no atomic move primitive. Existence is checked with GetObject rather than
+// HeadObject, since the deployed instance role (least-privilege, GetObject/
+// PutObject/CopyObject/DeleteObject on notes/*) doesn't grant s3:HeadObject.
+func (s *S3Store) Rename(ctx context.Context, oldSlug, newSlug string) error {
+	existing, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(newSlug)),
+	})
+	if err == nil {
+		defer existing.Body.Close()
+		return ErrAlreadyExists
+	}
+	if !isNotFound(err) {
+		return err
+	}
+
+	_, err = s.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(s.key(newSlug)),
+		CopySource:  aws.String(s.bucket + "/" + s.key(oldSlug)),
+		ContentType: aws.String("text/plain; charset=utf-8"),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	_, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(oldSlug)),
 	})
 	return err
 }

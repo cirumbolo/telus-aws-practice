@@ -31,6 +31,7 @@ func (a *API) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /notes/{slug}", a.getNote)
 	mux.HandleFunc("PUT /notes/{slug}", a.putNote)
+	mux.HandleFunc("PATCH /notes/{slug}", a.renameNote)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(a.webDir))))
 	mux.HandleFunc("GET /", a.serveApp)
 	return a.withCORS(mux)
@@ -81,6 +82,44 @@ func (a *API) putNote(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// renameNote moves the note at slug to the slug given in the request body.
+func (a *API) renameNote(w http.ResponseWriter, r *http.Request) {
+	oldSlug := r.PathValue("slug")
+	if !validSlug(oldSlug) {
+		http.Error(w, "invalid slug", http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	var req struct {
+		Slug string `json:"slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "note too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if !validSlug(req.Slug) {
+		http.Error(w, "invalid slug", http.StatusBadRequest)
+		return
+	}
+
+	err := a.store.Rename(r.Context(), oldSlug, req.Slug)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrNotFound):
+		http.Error(w, "note not found", http.StatusNotFound)
+	case errors.Is(err, ErrAlreadyExists):
+		http.Error(w, "a note already exists at that slug", http.StatusConflict)
+	default:
+		http.Error(w, "store error", http.StatusInternalServerError)
+	}
+}
+
 // serveApp handles everything not matched by the API routes: the root redirect,
 // the pad page for a slug, and 404s. Static assets are served by the /static/
 // file server registered in routes. This is a local convenience; on S3 the
@@ -107,7 +146,7 @@ func (a *API) withCORS(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", a.allowOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, PATCH, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
