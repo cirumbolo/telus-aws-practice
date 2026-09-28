@@ -51,7 +51,7 @@ IAM → Policies → **Create policy** → JSON. Name: `NoteMSNotesBucketRW`.
     {
       "Sid": "ReadWriteNoteObjects",
       "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:CopyObject", "s3:DeleteObject"],
       "Resource": "arn:aws:s3:::REPLACE-BUCKET/notes/*"
     }
   ]
@@ -67,6 +67,12 @@ IAM → Policies → **Create policy** → JSON. Name: `NoteMSNotesBucketRW`.
 - Want the cleaner `NoSuchKey` behaviour instead? Add a second statement with
   `"Action": "s3:ListBucket"` on `arn:aws:s3:::REPLACE-BUCKET`. Try it both ways
   and watch the error change — it's the best hands-on IAM lesson here.
+- **`s3:CopyObject`/`s3:DeleteObject` added 2026-09-28** for the note-rename
+  feature: `S3Store.Rename` (`api/store_s3.go`) has no atomic move primitive
+  in S3, so it copies to the new key then deletes the old one. Applied live
+  as policy version `v2` on `NotesBucketTeacher` via `aws iam
+  create-policy-version --set-as-default` — no EC2 restart needed, IAM
+  changes take effect immediately for the running instance role.
 
 ## Step 3 — IAM role + instance profile
 
