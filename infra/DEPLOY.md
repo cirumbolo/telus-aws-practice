@@ -231,6 +231,22 @@ Git keeps `API_BASE = ""` so local dev (same-origin) keeps working untouched.
 > access to S3 objects; the cross-origin traffic here goes to the EC2 API, which
 > sets CORS headers itself via `ALLOW_ORIGIN`.
 
+**This step is now automated** by `.github/workflows/deploy-web.yml` — on every
+push to `main` that touches `web/**`, it does the `sed` substitution above and
+uploads all three files to the web bucket. One-time setup done (2026-09-28):
+
+- IAM user `notes-frontend-ci`, policy `NotesFrontendCIWrite` scoped to
+  `s3:ListBucket` on the bucket and `s3:PutObject`/`s3:GetObject` on
+  `bucket/*` — write-only to this one bucket, same least-privilege pattern as
+  the notes bucket's instance role.
+- Repo secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (the CI user's
+  key pair), `S3_WEB_BUCKET` (`notes-frontend-teacher`), `AWS_REGION`
+  (`us-east-2`). Reuses the existing `EC2_HOST` secret to build `API_BASE`,
+  so the EC2 address stays in one place.
+- Manual upload is still useful for a one-off test without pushing to `main`,
+  but the normal path is: merge to `main` → both `deploy.yml` (API) and
+  `deploy-web.yml` (frontend) run automatically off the paths they each own.
+
 ---
 
 ## Verification checkpoints
@@ -418,6 +434,33 @@ curl health check against the running service.
   previous binary is a reasonable follow-up once the pipeline's proven out.
 - Does not create the Elastic IP, security group rule, or secrets — those
   are manual one-time steps above, not automated by the workflow itself.
+
+### Frontend deploy — `.github/workflows/deploy-web.yml`
+
+Separate workflow, separate trigger path (`web/**`), because the frontend and
+API deploy to different targets (S3 vs. EC2) on independent release cadences —
+a `web/`-only change shouldn't rebuild/restart the API, and vice versa.
+
+Automates Step 9 above: on every push to `main` touching `web/**`, it
+substitutes `API_BASE` into a deploy copy of `app.js` (git keeps the source
+`API_BASE = ""`) and uploads `index.html`/`static/app.js`/`static/styles.css`
+to the web bucket via `aws s3 cp`.
+
+**One-time setup done (2026-09-28):**
+
+1. **IAM user `notes-frontend-ci`**, inline policy `NotesFrontendCIWrite`:
+   `s3:ListBucket` on the bucket, `s3:PutObject`/`s3:GetObject` on
+   `bucket/*` — write access to this one bucket only, no broader S3 or IAM
+   permissions. Access key pair generated via `aws iam create-access-key`.
+2. **Repo secrets set:**
+   - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — the CI user's key pair.
+   - `S3_WEB_BUCKET` = `notes-frontend-teacher`
+   - `AWS_REGION` = `us-east-2`
+   - Reuses the existing `EC2_HOST` secret to build `API_BASE` at deploy
+     time, so the EC2 address has one source of truth across both workflows.
+
+**What it does NOT do yet:** no cache invalidation (not needed — no
+CloudFront in front yet, see Phase 2), no rollback on upload failure.
 
 ## Phase 2 (optional) — CloudFront, two origins
 

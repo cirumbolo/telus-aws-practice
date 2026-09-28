@@ -1,0 +1,35 @@
+name: Deploy to S3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Prepare deploy copy with API_BASE set
+        run: |
+          mkdir -p dist/static
+          cp web/index.html dist/index.html
+          cp web/styles.css dist/static/styles.css
+          sed 's#const API_BASE = "";#const API_BASE = "http://${{ secrets.EC2_HOST }}:8080";#' \
+            web/app.js > dist/static/app.js
+
+      - name: Sync to S3
+        run: |
+          aws s3 cp dist/index.html "s3://${{ secrets.S3_WEB_BUCKET }}/index.html"
+          aws s3 cp dist/static/app.js "s3://${{ secrets.S3_WEB_BUCKET }}/static/app.js"
+          aws s3 cp dist/static/styles.css "s3://${{ secrets.S3_WEB_BUCKET }}/static/styles.css"
