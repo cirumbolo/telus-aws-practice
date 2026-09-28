@@ -3,9 +3,25 @@ html, body {
   margin: 0;
 }
 
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#slug-header {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font: 16px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: normal;
+  border-bottom: 1px solid #ddd;
+  background: #fff;
+  color: #111;
+  outline: 0;
+}
+
 #pad {
-  width: 100vw;
-  height: 100vh;
+  flex: 1;
+  width: 100%;
   border: 0;
   outline: 0;
   resize: none;
@@ -17,6 +33,12 @@ html, body {
 }
 
 @media (prefers-color-scheme: dark) {
+  #slug-header {
+    background: #1a1a1a;
+    color: #eaeaea;
+    border-bottom-color: #333;
+  }
+
   #pad {
     background: #1a1a1a;
     color: #eaeaea;
