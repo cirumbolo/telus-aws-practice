@@ -367,6 +367,45 @@ on port 8080, and a bare connection timeout on port 22) — if a browser test or
 SSH hangs or gets intercepted only on one network, retry from a phone hotspot
 or home connection before assuming the AWS-side config is wrong.
 
+## Continuous deploy (GitHub Actions)
+
+`.github/workflows/deploy.yml` automates steps 6–7 above (build, ship,
+restart) on every push to `main` that touches `api/**`. It runs `go vet` +
+`go test`, cross-compiles for `linux/amd64` (matching the `t3.micro` instance
+type used so far — change this if a future instance is arm64/`t4g.*`), scp's
+the binary over, and restarts the systemd service via SSH, finishing with a
+curl health check against the running service.
+
+### One-time setup before the first automated deploy
+
+1. **Allocate an Elastic IP and associate it with the instance.** Without
+   this, every stop/start changes the public IP, which silently breaks the
+   `EC2_HOST` secret below — the exact stale-IP failure mode hit manually
+   during today's session, just moved from the local SSH command to CI.
+2. **Widen (or add a second) SSH inbound rule for GitHub-hosted runners.**
+   GitHub Actions runners don't have a stable IP, so the existing "my IP
+   only" SSH rule won't admit them. Two options, pick one:
+   - Add a second inbound rule on port 22 sourced from GitHub's [published
+     Actions IP ranges](https://api.github.com/meta) (`actions` key) — more
+     correct, needs periodic updates since the ranges rotate.
+   - Simpler and adequate for a lab account: open port 22 to `0.0.0.0/0` and
+     rely on key-based auth only (no password auth, which the AMI already
+     enforces). Acceptable here because this is a low-value learning
+     instance, not a production system — reconsider for anything real.
+3. **Add three repo secrets** (Settings → Secrets and variables → Actions):
+   - `EC2_HOST` — the Elastic IP from step 1
+   - `EC2_SSH_KEY` — full contents of the `.pem` private key used to SSH in
+   - (the SSH user is hardcoded as `ec2-user` in the workflow, matching
+     Amazon Linux — no secret needed for it)
+
+### What it does NOT do yet
+
+- No rollback on a failed health check — a bad deploy currently just fails
+  the GitHub Actions run with the old binary already replaced; restoring the
+  previous binary is a reasonable follow-up once the pipeline's proven out.
+- Does not create the Elastic IP, security group rule, or secrets — those
+  are manual one-time steps above, not automated by the workflow itself.
+
 ## Phase 2 (optional) — CloudFront, two origins
 
 Once the HTTP version works end to end, put CloudFront in front with **two

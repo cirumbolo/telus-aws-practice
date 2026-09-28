@@ -1,0 +1,49 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+
+      - name: Test
+        working-directory: api
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build
+        working-directory: api
+        run: GOOS=linux GOARCH=amd64 go build -o note-api .
+
+      - name: Deploy over SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          umask 077
+          echo "$EC2_SSH_KEY" > deploy_key.pem
+          chmod 600 deploy_key.pem
+
+          scp -o StrictHostKeyChecking=accept-new -i deploy_key.pem \
+            api/note-api ec2-user@"$EC2_HOST":~/note-api
+
+          ssh -o StrictHostKeyChecking=accept-new -i deploy_key.pem ec2-user@"$EC2_HOST" '
+            set -e
+            chmod +x ~/note-api
+            sudo mv ~/note-api /usr/local/bin/note-api
+            sudo systemctl restart note-api
+            sleep 2
+            curl -sf localhost:8080/notes/deploy-health-check > /dev/null
+          '
