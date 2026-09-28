@@ -71,3 +71,62 @@ func TestNewFSStoreMkdirFailure(t *testing.T) {
 		t.Fatal("NewFSStore err = nil, want an error")
 	}
 }
+
+func TestFSStoreRenameMovesContent(t *testing.T) {
+	s, err := NewFSStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	ctx := context.Background()
+	if err := s.Put(ctx, "old", "hello"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if err := s.Rename(ctx, "old", "new"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+
+	got, err := s.Get(ctx, "new")
+	if err != nil {
+		t.Fatalf("Get(new): %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("Get(new) = %q, want %q", got, "hello")
+	}
+	if _, err := s.Get(ctx, "old"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get(old) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestFSStoreRenameMissingSourceErrors(t *testing.T) {
+	s, err := NewFSStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	if err := s.Rename(context.Background(), "nope", "new"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Rename err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestFSStoreRenameExistingDestinationErrors(t *testing.T) {
+	s, err := NewFSStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	ctx := context.Background()
+	if err := s.Put(ctx, "old", "hello"); err != nil {
+		t.Fatalf("Put(old): %v", err)
+	}
+	if err := s.Put(ctx, "new", "already here"); err != nil {
+		t.Fatalf("Put(new): %v", err)
+	}
+
+	if err := s.Rename(ctx, "old", "new"); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("Rename err = %v, want ErrAlreadyExists", err)
+	}
+	// Neither note should have been touched by the rejected rename.
+	got, _ := s.Get(ctx, "new")
+	if got != "already here" {
+		t.Fatalf("Get(new) after rejected rename = %q, want unchanged %q", got, "already here")
+	}
+}

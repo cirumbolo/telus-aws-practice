@@ -15,9 +15,10 @@ import (
 // honest. getErr/putErr, when set, let tests reach the handlers' store-error
 // branches, which an always-succeeding fake never could.
 type memStore struct {
-	m      map[string]string
-	getErr error
-	putErr error
+	m         map[string]string
+	getErr    error
+	putErr    error
+	renameErr error
 }
 
 func newMemStore() *memStore { return &memStore{m: map[string]string{}} }
@@ -38,6 +39,22 @@ func (s *memStore) Put(_ context.Context, slug, text string) error {
 		return s.putErr
 	}
 	s.m[slug] = text
+	return nil
+}
+
+func (s *memStore) Rename(_ context.Context, oldSlug, newSlug string) error {
+	if s.renameErr != nil {
+		return s.renameErr
+	}
+	v, ok := s.m[oldSlug]
+	if !ok {
+		return ErrNotFound
+	}
+	if _, ok := s.m[newSlug]; ok {
+		return ErrAlreadyExists
+	}
+	delete(s.m, oldSlug)
+	s.m[newSlug] = v
 	return nil
 }
 
@@ -224,8 +241,8 @@ func TestCORSHeadersSetWhenOriginConfigured(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://example.com" {
 		t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, "http://example.com")
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "GET, PUT, OPTIONS" {
-		t.Errorf("Access-Control-Allow-Methods = %q, want %q", got, "GET, PUT, OPTIONS")
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "GET, PUT, PATCH, OPTIONS" {
+		t.Errorf("Access-Control-Allow-Methods = %q, want %q", got, "GET, PUT, PATCH, OPTIONS")
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type" {
 		t.Errorf("Access-Control-Allow-Headers = %q, want %q", got, "Content-Type")
@@ -244,5 +261,102 @@ func TestCORSPreflightOptionsShortCircuits(t *testing.T) {
 	}
 	if _, ok := store.m["abc12"]; ok {
 		t.Fatal("preflight reached the store; want short-circuit before routing")
+	}
+}
+
+func TestRenameNoteSuccess(t *testing.T) {
+	store := newMemStore()
+	store.m["old"] = "hello"
+	api := &API{store: store, webDir: "../web"}
+	req := httptest.NewRequest(http.MethodPatch, "/notes/old",
+		strings.NewReader(`{"slug":"new"}`))
+	rec := httptest.NewRecorder()
+	api.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if store.m["new"] != "hello" {
+		t.Fatalf("m[new] = %q, want %q", store.m["new"], "hello")
+	}
+	if _, ok := store.m["old"]; ok {
+		t.Fatal("m[old] still present after rename")
+	}
+}
+
+func TestRenameNoteInvalidNewSlugRejected(t *testing.T) {
+	store := newMemStore()
+	store.m["old"] = "hello"
+	api := &API{store: store, webDir: "../web"}
+	req := httptest.NewRequest(http.MethodPatch, "/notes/old",
+		strings.NewReader(`{"slug":"has space"}`))
+	rec := httptest.NewRecorder()
+	api.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestRenameNoteMissingSourceReturns404(t *testing.T) {
+	api := newTestAPI()
+	req := httptest.NewRequest(http.MethodPatch, "/notes/nope",
+		strings.NewReader(`{"slug":"new"}`))
+	rec := httptest.NewRecorder()
+	api.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestRenameNoteExistingDestinationReturns409(t *testing.T) {
+	store := newMemStore()
+	store.m["old"] = "hello"
+	store.m["new"] = "already here"
+	api := &API{store: store, webDir: "../web"}
+	req := httptest.NewRequest(http.MethodPatch, "/notes/old",
+		strings.NewReader(`{"slug":"new"}`))
+	rec := httptest.NewRecorder()
+	api.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+}
+
+func TestRenameNoteStoreErrorReturns500(t *testing.T) {
+	api := &API{store: &memStore{m: map[string]string{}, renameErr: errors.New("boom")}, webDir: "../web"}
+	req := httptest.NewRequest(http.MethodPatch, "/notes/old",
+		strings.NewReader(`{"slug":"new"}`))
+	rec := httptest.NewRecorder()
+	api.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+func TestRenameNoteMalformedJSONRejected(t *testing.T) {
+	api := newTestAPI()
+	req := httptest.NewRequest(http.MethodPatch, "/notes/old",
+		strings.NewReader(`not json at all`))
+	rec := httptest.NewRecorder()
+	api.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestRenameNoteInvalidOldSlugRejected(t *testing.T) {
+	api := newTestAPI()
+	req := httptest.NewRequest(http.MethodPatch, "/notes/has%20space",
+		strings.NewReader(`{"slug":"new"}`))
+	rec := httptest.NewRecorder()
+	api.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }

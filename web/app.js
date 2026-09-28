@@ -4,8 +4,14 @@
 const API_BASE = "";
 
 const pad = document.getElementById("pad");
-const slug = location.pathname.slice(1);
+const header = document.getElementById("slug-header");
+let slug = location.pathname.slice(1);
 document.title = slug || "note";
+header.textContent = slug;
+
+// Mirrors the server's slug validation (handler.go's slugRe) so an obviously
+// bad rename is rejected client-side before hitting the network.
+const SLUG_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 // Load the note on open. A missing note comes back as {"text": ""}, so a fresh
 // pad just starts empty.
@@ -38,6 +44,42 @@ let timer;
 pad.addEventListener("input", () => {
   clearTimeout(timer);
   timer = setTimeout(save, 800);
+});
+
+// Renaming moves the note server-side and navigates the browser to the new
+// URL, keeping the header and the address bar in sync. Fires on blur or
+// Enter rather than per-keystroke, since a rename is a bigger operation
+// than a save.
+async function rename() {
+  const newSlug = header.textContent.trim();
+  if (newSlug === slug) return;
+  if (!SLUG_RE.test(newSlug)) {
+    header.textContent = slug;
+    return;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/notes/${slug}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: newSlug }),
+    });
+    if (!res.ok) {
+      // Conflict (409), not found (404), etc. — revert and stay put.
+      header.textContent = slug;
+      return;
+    }
+    location.pathname = "/" + newSlug;
+  } catch (_) {
+    header.textContent = slug;
+  }
+}
+
+header.addEventListener("blur", rename);
+header.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    header.blur();
+  }
 });
 
 load();
