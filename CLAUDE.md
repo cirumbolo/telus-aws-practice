@@ -106,7 +106,10 @@ URL at the local Go server.
 
 - **EC2:** Amazon Linux; security group opens only the API port (+ SSH for admin);
   attach an **IAM instance profile** granting least-privilege
-  `s3:GetObject` / `s3:PutObject` scoped to the notes bucket only.
+  `s3:GetObject` / `s3:PutObject` scoped to the notes bucket only. The FuelIX
+  key lives in SSM Parameter Store (`/note-api/fuelix-api-key`, SecureString);
+  a second policy grants the role `ssm:GetParameter` on that one parameter and
+  `infra/fetch-fuelix-key.sh` loads it into a tmpfs env file at service start.
 - **S3:** one **private** notes bucket; one static-website frontend bucket (configure
   Block Public Access appropriately, or front it with CloudFront + Origin Access
   Control).
