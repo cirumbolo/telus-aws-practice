@@ -46,7 +46,8 @@ S3 → **Create bucket**, e.g. `notems-notes-<yourname>`.
 
 ## Step 2 — IAM policy
 
-IAM → Policies → **Create policy** → JSON. Name: `NoteMSNotesBucketRW`.
+IAM → Policies → **Create policy** → JSON. Name: `NoteMSNotesBucketRW`
+(the live account may use a different name; same policy).
 
 ```json
 {
@@ -74,7 +75,7 @@ IAM → Policies → **Create policy** → JSON. Name: `NoteMSNotesBucketRW`.
 - **`s3:CopyObject`/`s3:DeleteObject` added 2026-09-28** for the note-rename
   feature: `S3Store.Rename` (`api/store_s3.go`) has no atomic move primitive
   in S3, so it copies to the new key then deletes the old one. Applied live
-  as policy version `v2` on `NotesBucketTeacher` via `aws iam
+  as policy version `v2` on the notes policy via `aws iam
   create-policy-version --set-as-default` — no EC2 restart needed, IAM
   changes take effect immediately for the running instance role.
 
@@ -97,6 +98,10 @@ EC2 → Security Groups → Create.
 | Inbound | TCP 8080 | `0.0.0.0/0` | The browser connects to the API directly |
 | Inbound | TCP 22 | **My IP only** | SSH admin — never `0.0.0.0/0` |
 | Outbound | all | default | `dnf` + S3 API calls |
+
+> The live stack deviates from "My IP only": once GitHub Actions deploys over
+> SSH, port 22 has to be `0.0.0.0/0` (see "Continuous deploy" below and
+> `terraform/README.md`). Start with My IP; widen only when you add CI.
 
 ## Step 5 — Launch EC2
 
@@ -306,19 +311,11 @@ Git keeps `API_BASE = ""` so local dev (same-origin) keeps working untouched.
 
 **This step is now automated** by `.github/workflows/deploy-web.yml` — on every
 push to `main` that touches `web/**`, it does the `sed` substitution above and
-uploads all three files to the web bucket. One-time setup done (2026-09-28):
-
-- IAM user `notes-frontend-ci`, policy `NotesFrontendCIWrite` scoped to
-  `s3:ListBucket` on the bucket and `s3:PutObject`/`s3:GetObject` on
-  `bucket/*` — write-only to this one bucket, same least-privilege pattern as
-  the notes bucket's instance role.
-- Repo secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (the CI user's
-  key pair), `S3_WEB_BUCKET` (`notes-frontend-teacher`), `AWS_REGION`
-  (`us-east-2`). Reuses the existing `EC2_HOST` secret to build `API_BASE`,
-  so the EC2 address stays in one place.
-- Manual upload is still useful for a one-off test without pushing to `main`,
-  but the normal path is: merge to `main` → both `deploy.yml` (API) and
-  `deploy-web.yml` (frontend) run automatically off the paths they each own.
+uploads all three files to the web bucket. Setup is documented under
+"Frontend deploy" in the Continuous deploy section below. Manual upload is
+still useful for a one-off test without pushing to `main`; the normal path is
+merge to `main` → `deploy.yml` (API) and `deploy-web.yml` (frontend) run
+automatically off the paths they each own.
 
 ---
 
@@ -329,7 +326,7 @@ open** — otherwise every misconfiguration looks identical ("the pad is empty")
 
 **0 — Unit tests, no AWS**
 ```bash
-cd api && go vet ./... && go test ./...     # 13 passing
+cd api && go vet ./... && go test ./...     # all passing
 ```
 
 **1 — Local binary against the real bucket** (highest value: isolates the S3
@@ -386,7 +383,7 @@ rejected (400) ✓
 | CORS error in browser, `curl` fine | `ALLOW_ORIGIN` trailing slash or scheme mismatch |
 | `PermanentRedirect` / `BucketRegionError` | Region mismatch between bucket and `AWS_REGION` |
 | Browser hangs, works over SSH | Security group missing 8080 inbound |
-| Worked yesterday, dead today | Public IP changed on stop/start — use an Elastic IP (as of 2026-09-28 this instance has one: `18.190.214.116`, so this shouldn't recur unless the EIP is released) |
+| Worked yesterday, dead today | Public IP changed on stop/start — use an Elastic IP (this instance has one, so this shouldn't recur unless the EIP is released) |
 | Bucket policy won't save | Block Public Access still on for the web bucket |
 | Unstyled page, no saving | Assets not under the `static/` prefix |
 | `ssh: connect ... port 22: Operation timed out`, but port 8080 works fine from the same machine | Your current public IP doesn't match the SSH rule's source — re-check with `curl -s https://checkip.amazonaws.com` and update the rule (common after switching networks) |
@@ -465,6 +462,12 @@ or home connection before assuming the AWS-side config is wrong.
 
 ## Continuous deploy (GitHub Actions)
 
+Three workflows live in `.github/workflows/`. Besides the two deploy pipelines
+below, `pr-checks.yml` runs on every PR to `main`: `go vet`, `go test` with a
+coverage summary, `gosec` static analysis, and `terraform fmt -check` +
+`validate` for `infra/terraform` and `infra/bootstrap`. It only verifies; it
+deploys nothing.
+
 `.github/workflows/deploy.yml` automates steps 6–7 above (build, ship,
 restart) on every push to `main` that touches `api/**`. It runs `go vet` +
 `go test`, cross-compiles for `linux/amd64` (matching the `t3.micro` instance
@@ -474,8 +477,7 @@ curl health check against the running service.
 
 ### One-time setup before the first automated deploy — done (2026-09-28)
 
-1. **Elastic IP allocated and associated** with the instance — currently
-   `18.190.214.116`. Without this, every stop/start changes the public IP,
+1. **Elastic IP allocated and associated** with the instance (address kept out of the docs). Without this, every stop/start changes the public IP,
    which silently breaks the `EC2_HOST` secret below — the exact stale-IP
    failure mode hit manually earlier in that session, just moved from the
    local SSH command to CI. An EIP stays associated with a *stopped*
@@ -487,17 +489,17 @@ curl health check against the running service.
    rotating [Actions IP ranges](https://api.github.com/meta) — acceptable
    here since this is a low-value lab instance and password auth stays
    disabled (key-only). Reconsider for anything real.
-3. **New dedicated CI key pair generated** (`~/.ssh/notes_ci_deploy`,
-   ed25519, no passphrase) — the original `NotesTeacherKeyPair` private key
+3. **New dedicated CI key pair generated** (ed25519, stored locally
+   outside the repo) — the original key pair's private key
    was lost (never saved to this machine), discovered when manual SSH
    auth failed. The new public key was appended to `ec2-user`'s
    `~/.ssh/authorized_keys` via a temporary EC2 Instance Connect session
    (doesn't require the lost key), so it persists across reboots
    independent of the original key pair.
 4. **Repo secrets set** (`gh secret set`, not the console, but equivalent):
-   - `EC2_HOST` = `18.190.214.116`
-   - `EC2_SSH_KEY` = contents of `~/.ssh/notes_ci_deploy` (the new CI key,
-     not the original `.pem`)
+   - `EC2_HOST` = the Elastic IP
+   - `EC2_SSH_KEY` = contents of the new CI private key (not
+     the original `.pem`)
    - (the SSH user is hardcoded as `ec2-user` in the workflow, matching
      Amazon Linux — no secret needed for it)
 
@@ -522,14 +524,14 @@ to the web bucket via `aws s3 cp`.
 
 **One-time setup done (2026-09-28):**
 
-1. **IAM user `notes-frontend-ci`**, inline policy `NotesFrontendCIWrite`:
+1. **Dedicated CI IAM user** with an inline policy:
    `s3:ListBucket` on the bucket, `s3:PutObject`/`s3:GetObject` on
    `bucket/*` — write access to this one bucket only, no broader S3 or IAM
    permissions. Access key pair generated via `aws iam create-access-key`.
 2. **Repo secrets set:**
    - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — the CI user's key pair.
-   - `S3_WEB_BUCKET` = `notes-frontend-teacher`
-   - `AWS_REGION` = `us-east-2`
+   - `S3_WEB_BUCKET` = the web bucket name
+   - `AWS_REGION` = the deployment region
    - Reuses the existing `EC2_HOST` secret to build `API_BASE` at deploy
      time, so the EC2 address has one source of truth across both workflows.
 
