@@ -145,6 +145,10 @@ Environment=NOTES_BUCKET=REPLACE-BUCKET
 Environment=AWS_REGION=REPLACE-REGION
 Environment=PORT=8080
 Environment=ALLOW_ORIGIN=http://REPLACE-WEBSITE-ENDPOINT
+# Optional — enables the Summary button. Omit all three to disable it (503).
+Environment=FUELIX_API_KEY=REPLACE-KEY
+Environment=FUELIX_BASE_URL=REPLACE-FUELIX-BASE-URL
+Environment=FUELIX_MODEL=REPLACE-MODEL
 ExecStart=/usr/local/bin/note-api
 Restart=on-failure
 RestartSec=3
@@ -165,6 +169,10 @@ journalctl -u note-api -f
 - **`ALLOW_ORIGIN` must match the website origin exactly** — scheme included,
   **no trailing slash**, no path. A mismatch produces a CORS failure that `curl`
   cannot reproduce.
+- `FUELIX_API_KEY` is a secret: never commit it. Unit files are world-readable
+  by default, so prefer `EnvironmentFile=/etc/note-api.env` (mode `0600`, root)
+  over an inline `Environment=` line. The instance needs outbound HTTPS to
+  FuelIX (default security-group egress allows it).
 - Chicken-and-egg: the endpoint comes from step 8. Do step 8 first, then set
   `ALLOW_ORIGIN` and `sudo systemctl restart note-api`.
 

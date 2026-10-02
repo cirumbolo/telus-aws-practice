@@ -50,6 +50,9 @@ concurrent editing is ever needed, move the note store to DynamoDB — the API's
   store.go       Store interface + ErrNotFound — the persistence seam
   store_fs.go    filesystem backend (local dev): data/{slug}.txt
   store_s3.go    S3 backend (aws-sdk-go-v2): notes/{slug}.txt
+  summarizer.go  Summarizer interface + FuelIX (OpenAI-compatible) client; backs
+                 POST /notes/{slug}/summary (FUELIX_API_KEY/BASE_URL/MODEL env;
+                 key stays server-side, nil summarizer → 503)
   *_test.go      handler contract, FSStore, and S3Store error-mapping tests
 /web/            Static frontend (deployed to the S3 site bucket)
   index.html     the pad (single <textarea>)

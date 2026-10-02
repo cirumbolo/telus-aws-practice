@@ -8,7 +8,14 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <h1 id="slug-header" contenteditable="true" spellcheck="false" aria-label="Note URL slug — edit to rename"></h1>
+  <div id="top-bar">
+    <h1 id="slug-header" contenteditable="true" spellcheck="false" aria-label="Note URL slug — edit to rename"></h1>
+    <button id="summary-btn" type="button">Summary</button>
+  </div>
+  <section id="summary" hidden>
+    <h2>Page summary</h2>
+    <p id="summary-text" role="status"></p>
+  </section>
   <textarea id="pad" autofocus spellcheck="false" aria-label="Note contents" placeholder="Start typing…"></textarea>
 </body>
 </html>

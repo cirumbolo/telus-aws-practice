@@ -241,8 +241,8 @@ func TestCORSHeadersSetWhenOriginConfigured(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://example.com" {
 		t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, "http://example.com")
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "GET, PUT, PATCH, OPTIONS" {
-		t.Errorf("Access-Control-Allow-Methods = %q, want %q", got, "GET, PUT, PATCH, OPTIONS")
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "GET, PUT, PATCH, POST, OPTIONS" {
+		t.Errorf("Access-Control-Allow-Methods = %q, want %q", got, "GET, PUT, PATCH, POST, OPTIONS")
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type" {
 		t.Errorf("Access-Control-Allow-Headers = %q, want %q", got, "Content-Type")
@@ -359,4 +359,84 @@ func TestRenameNoteInvalidOldSlugRejected(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
+}
+
+type fakeSummarizer struct {
+	out string
+	err error
+	got string
+}
+
+func (f *fakeSummarizer) Summarize(_ context.Context, text string) (string, error) {
+	f.got = text
+	return f.out, f.err
+}
+
+func postSummary(t *testing.T, a *API, slug string) *http.Response {
+	t.Helper()
+	srv := httptest.NewServer(a.routes())
+	t.Cleanup(srv.Close)
+	res, err := http.Post(srv.URL+"/notes/"+slug+"/summary", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { res.Body.Close() })
+	return res
+}
+
+func TestSummarySuccess(t *testing.T) {
+	a := newTestAPI()
+	f := &fakeSummarizer{out: "about cats"}
+	a.summarizer = f
+	a.store.(*memStore).m["pad"] = "cats are great"
+
+	res := postSummary(t, a, "pad")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["summary"] != "about cats" || f.got != "cats are great" {
+		t.Errorf("body=%v got=%q", body, f.got)
+	}
+}
+
+func TestSummaryStatusCodes(t *testing.T) {
+	t.Run("not configured", func(t *testing.T) {
+		if res := postSummary(t, newTestAPI(), "pad"); res.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("status = %d", res.StatusCode)
+		}
+	})
+	t.Run("invalid slug", func(t *testing.T) {
+		a := newTestAPI()
+		a.summarizer = &fakeSummarizer{}
+		if res := postSummary(t, a, "bad.slug"); res.StatusCode != http.StatusBadRequest {
+			t.Errorf("status = %d", res.StatusCode)
+		}
+	})
+	t.Run("empty note", func(t *testing.T) {
+		a := newTestAPI()
+		a.summarizer = &fakeSummarizer{}
+		if res := postSummary(t, a, "fresh"); res.StatusCode != http.StatusBadRequest {
+			t.Errorf("status = %d", res.StatusCode)
+		}
+	})
+	t.Run("upstream error", func(t *testing.T) {
+		a := newTestAPI()
+		a.summarizer = &fakeSummarizer{err: errors.New("boom")}
+		a.store.(*memStore).m["pad"] = "text"
+		if res := postSummary(t, a, "pad"); res.StatusCode != http.StatusBadGateway {
+			t.Errorf("status = %d", res.StatusCode)
+		}
+	})
+	t.Run("store error", func(t *testing.T) {
+		a := newTestAPI()
+		a.summarizer = &fakeSummarizer{}
+		a.store.(*memStore).getErr = errors.New("boom")
+		if res := postSummary(t, a, "pad"); res.StatusCode != http.StatusInternalServerError {
+			t.Errorf("status = %d", res.StatusCode)
+		}
+	})
 }

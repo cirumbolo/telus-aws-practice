@@ -45,6 +45,9 @@ single origin.
 | `AWS_REGION`   | *(unset)* | Region for the `s3` store (or take it from the AWS profile). |
 | `WEB_DIR`      | `../web`  | Directory holding `index.html` + static assets.      |
 | `ALLOW_ORIGIN` | *(unset)* | Enables CORS for a given origin (for a two-origin/S3 deployment). Left unset locally. |
+| `FUELIX_API_KEY` | *(unset)* | Enables the Summary button (`POST /notes/{slug}/summary`). Unset → the endpoint returns 503. Requires the two vars below. |
+| `FUELIX_BASE_URL` | *(unset)* | FuelIX OpenAI-compatible base URL; `/chat/completions` is appended. |
+| `FUELIX_MODEL` | *(unset)* | Model name sent to FuelIX. |
 
 Example:
 
