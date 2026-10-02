@@ -5,11 +5,25 @@ Projeto para treinar a certificacao do AWS e mentoria de Ideraldo para Guilherme
 A [note.ms](https://note.ms) clone: a minimalist, anonymous, URL-addressed
 plain-text notepad. Visit `/{slug}`, type into the single text area, and it
 auto-saves to that URL; reopening the URL restores the text. See `CLAUDE.md`
-for the full architecture and the eventual AWS (EC2 + S3) target.
+for the full architecture. The app is deployed on AWS (EC2 + S3); the stack is
+codified in Terraform and shipped by GitHub Actions (see
+[Infrastructure & CI/CD](#infrastructure--cicd)).
+
+Beyond the basic pad it supports renaming a note to a new slug and an
+AI-generated summary of a note (the "Summary" button, backed by FuelIX).
+
+## Repository layout
+
+| Path          | What it is                                                       |
+| ------------- | ---------------------------------------------------------------- |
+| `api/`        | Go JSON API (`net/http`); `fs` and `s3` storage backends         |
+| `web/`        | Static frontend (`index.html`, `app.js`, `styles.css`)           |
+| `infra/`      | AWS walkthrough (`DEPLOY.md`), Terraform, FuelIX key fetch script |
+| `.github/workflows/` | PR checks and the two deploy pipelines                    |
 
 ## Prerequisites
 
-- Go 1.22+ (developed on 1.26). No AWS account or credentials needed for local
+- Go 1.26+ (see `api/go.mod`). No AWS account or credentials needed for local
   dev — notes are stored on the local filesystem.
 
 ## Run locally
@@ -80,8 +94,15 @@ standard library.
   `200 {"text":""}` (never `404`) — a brand-new pad is a normal case.
 - `PUT /notes/{slug}` ← `{"text":"..."}` → `204 No Content`. Upsert; request
   body capped at 100 KiB.
+- `PATCH /notes/{slug}` ← `{"slug":"new-slug"}` → `204 No Content`. Renames
+  (moves) the note. `404` if the source note doesn't exist, `409` if a note
+  already exists at the new slug.
+- `POST /notes/{slug}/summary` → `200 {"summary":"..."}`. Summarizes the
+  *saved* note (the body is ignored, so the endpoint can't be used as a generic
+  LLM proxy). `503` if FuelIX isn't configured, `502` if the upstream call fails.
 
-Slugs must match `^[a-zA-Z0-9_-]{1,64}$`; anything else is rejected with `400`.
+Slugs (both in the path and in a rename body) must match
+`^[a-zA-Z0-9_-]{1,64}$`; anything else is rejected with `400`.
 
 ### Quick check with curl
 
@@ -101,5 +122,21 @@ curl http://localhost:8080/notes/brandnew                           # → {"text
 cd api
 go test ./...            # run the unit + handler tests
 go vet ./...             # static checks
-go build -o note-api .   # single static binary (shipped to EC2 later)
+go build -o note-api .   # single static binary (what gets shipped to EC2)
 ```
+
+## Infrastructure & CI/CD
+
+- **Walkthrough:** [`infra/DEPLOY.md`](infra/DEPLOY.md) explains each AWS
+  resource (notes bucket, IAM role, security group, EC2, web bucket) and how to
+  verify it.
+- **Terraform:** [`infra/terraform/`](infra/terraform/README.md) is the source of
+  truth for the live stack (imported, not recreated); `infra/bootstrap/` creates
+  the remote-state bucket once.
+- **GitHub Actions:**
+
+  | Workflow        | Trigger                          | Does                                              |
+  | --------------- | -------------------------------- | ------------------------------------------------- |
+  | `pr-checks.yml` | pull request to `main`           | `go vet`, tests + coverage, `gosec`, `terraform fmt`/`validate` |
+  | `deploy.yml`    | push to `main` touching `api/**` | test, build `linux/amd64`, ship over SSH, restart, health check |
+  | `deploy-web.yml`| push to `main` touching `web/**` | inject `API_BASE`, upload to the web bucket       |

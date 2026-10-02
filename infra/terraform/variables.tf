@@ -21,7 +21,6 @@ variable "web_bucket" {
 variable "instance_name" {
   description = "Name tag of the live API instance."
   type        = string
-  default     = "NotesTeacherAPI"
 }
 
 variable "instance_type" {
@@ -36,18 +35,15 @@ variable "ssh_cidr" {
 }
 
 variable "instance_role_name" {
-  type    = string
-  default = "NotesTeacherInstanceRole"
+  type = string
 }
 
 variable "notes_policy_name" {
-  type    = string
-  default = "NotesBucketTeacher"
+  type = string
 }
 
 variable "security_group_name" {
-  type    = string
-  default = "NotesTeacherSG"
+  type = string
 }
 
 # Existing-resource IDs, used by ec2.tf and imports.tf.

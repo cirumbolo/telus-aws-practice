@@ -23,6 +23,8 @@ Browser
   └─ JS calls EC2 API (JSON over HTTP — see note below):
        GET /notes/{slug}   → { "text": "..." }   (200; missing key → 200 empty text)
        PUT /notes/{slug}   ← { "text": "..." }   (upsert; debounced auto-save)
+       PATCH /notes/{slug} ← { "slug": "new" }   (rename; 404 missing, 409 taken)
+       POST /notes/{slug}/summary → { "summary": "..." }  (FuelIX; 503 if unset)
 
 EC2 (Go net/http) ──IAM instance role──▶ S3 notes bucket: notes/{slug}.txt
 ```
@@ -46,8 +48,9 @@ concurrent editing is ever needed, move the note store to DynamoDB — the API's
 ```
 /api/            Go API server
   main.go        wiring, config from env, backend selection, http.Server
-  handler.go     GET/PUT /notes/{slug}, slug validation, CORS
-  store.go       Store interface + ErrNotFound — the persistence seam
+  handler.go     GET/PUT/PATCH /notes/{slug}, POST .../summary, slug validation, CORS
+  store.go       Store interface (incl. Rename) + ErrNotFound/ErrAlreadyExists —
+                 the persistence seam
   store_fs.go    filesystem backend (local dev): data/{slug}.txt
   store_s3.go    S3 backend (aws-sdk-go-v2): notes/{slug}.txt
   summarizer.go  Summarizer interface + FuelIX (OpenAI-compatible) client; backs
@@ -59,8 +62,13 @@ concurrent editing is ever needed, move the note store to DynamoDB — the API's
   app.js         load-on-open + debounced auto-save (fetch); API_BASE seam
   styles.css     minimalist, full-viewport textarea
 /infra/          DEPLOY.md — AWS console walkthrough (reference)
+  fetch-fuelix-key.sh  ExecStartPre helper: SSM param → tmpfs env file
   terraform/     IaC for the live stack (imported); S3 remote state
   bootstrap/     one-time config creating the state bucket
+/.github/workflows/
+  pr-checks.yml  PRs to main: go vet/test+coverage, gosec, terraform fmt/validate
+  deploy.yml     push to main touching api/**: test, build, scp + restart on EC2
+  deploy-web.yml push to main touching web/**: inject API_BASE, upload to S3
 README.md
 ```
 
