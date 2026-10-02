@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (gitignored) and fill from the AWS console / CLI.
+account_id        = "123456789012"
+notes_bucket      = "your-private-notes-bucket"
+web_bucket        = "your-website-bucket"
+vpc_id            = "vpc-xxxxxxxx"
+instance_id       = "i-xxxxxxxx"
+ami_id            = "ami-xxxxxxxx"
+key_name          = "your-keypair"
+security_group_id = "sg-xxxxxxxx"
+eip_allocation_id = "eipalloc-xxxxxxxx"
+eip_association_id = "eipassoc-xxxxxxxx"
