@@ -68,6 +68,14 @@ func main() {
 		allowOrigin: os.Getenv("ALLOW_ORIGIN"),
 	}
 
+	if key := os.Getenv("FUELIX_API_KEY"); key != "" {
+		baseURL, model := os.Getenv("FUELIX_BASE_URL"), os.Getenv("FUELIX_MODEL")
+		if baseURL == "" || model == "" {
+			log.Fatal("FUELIX_API_KEY set but FUELIX_BASE_URL or FUELIX_MODEL is missing")
+		}
+		api.summarizer = NewFuelIXSummarizer(baseURL, key, model)
+	}
+
 	addr := ":" + getenv("PORT", "8080")
 	srv := &http.Server{
 		Addr:              addr,

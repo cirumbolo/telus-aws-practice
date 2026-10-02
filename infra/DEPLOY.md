@@ -128,6 +128,59 @@ Pure stdlib + AWS SDK, so CGO is off and the binary is static — no glibc conce
 
 Mismatched `GOARCH` gives `exec format error`.
 
+## Step 6b — FuelIX API key in Parameter Store (optional, enables Summary)
+
+The Summary button calls FuelIX from the API, so the key lives only on the
+server side. Store it as an encrypted SSM parameter and let the instance role
+read it at service start — nothing secret in git, the S3 buckets, or the unit
+file.
+
+1. **Create the parameter** (from a machine with admin creds; `read -rs` keeps the
+   key out of your shell history):
+
+   ```bash
+   read -rs KEY
+   aws ssm put-parameter --name /note-api/fuelix-api-key \
+     --type SecureString --value "$KEY" --overwrite --region REPLACE-REGION
+   unset KEY
+   ```
+
+   `SecureString` encrypts with the AWS-managed key `alias/aws/ssm` by default.
+   Rotating the key later is the same `put-parameter --overwrite` plus
+   `sudo systemctl restart note-api`.
+
+2. **Grant read access.** IAM → Policies → Create policy, name
+   `NoteMSFuelIXKeyRead`, then attach it to `NoteMSInstanceRole`:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Sid": "ReadFuelIXKey",
+         "Effect": "Allow",
+         "Action": "ssm:GetParameter",
+         "Resource": "arn:aws:ssm:REPLACE-REGION:REPLACE-ACCOUNT-ID:parameter/note-api/fuelix-api-key"
+       }
+     ]
+   }
+   ```
+
+   - Scope to the one parameter ARN, no wildcard. In the ARN the parameter
+     name's leading `/` is the separator after `parameter` — write
+     `parameter/note-api/...`, not `parameter//note-api/...`.
+   - The default `aws/ssm` key needs no extra `kms:Decrypt` statement. If you
+     switch to a customer-managed key, add `kms:Decrypt` on that key's ARN or
+     `GetParameter --with-decryption` fails with `AccessDeniedException`.
+
+3. **Install the fetch script** on the instance (it is committed at
+   `infra/fetch-fuelix-key.sh`):
+
+   ```bash
+   scp infra/fetch-fuelix-key.sh ec2-user@REPLACE-IP:/tmp/
+   ssh ec2-user@REPLACE-IP 'sudo install -m 0755 -o root /tmp/fetch-fuelix-key.sh /usr/local/bin/'
+   ```
+
 ## Step 7 — Run as a systemd service
 
 Create `/etc/systemd/system/note-api.service`:
@@ -145,6 +198,15 @@ Environment=NOTES_BUCKET=REPLACE-BUCKET
 Environment=AWS_REGION=REPLACE-REGION
 Environment=PORT=8080
 Environment=ALLOW_ORIGIN=http://REPLACE-WEBSITE-ENDPOINT
+# Optional — enables the Summary button (step 6b). Without the key the
+# summary endpoint just returns 503. The URL and model aren't secret.
+Environment=FUELIX_BASE_URL=https://api.fuelix.ai/v1
+Environment=FUELIX_MODEL=claude-sonnet-4-5
+RuntimeDirectory=note-api
+RuntimeDirectoryMode=0700
+# "-" = keep starting if the key can't be fetched (summaries stay disabled).
+ExecStartPre=-/usr/local/bin/fetch-fuelix-key.sh
+EnvironmentFile=-/run/note-api/env
 ExecStart=/usr/local/bin/note-api
 Restart=on-failure
 RestartSec=3
@@ -165,6 +227,13 @@ journalctl -u note-api -f
 - **`ALLOW_ORIGIN` must match the website origin exactly** — scheme included,
   **no trailing slash**, no path. A mismatch produces a CORS failure that `curl`
   cannot reproduce.
+- `FUELIX_API_KEY` is never in the unit file: `fetch-fuelix-key.sh` writes it
+  to `/run/note-api/env` (tmpfs, `0600`, gone on stop/reboot) on every start.
+  The instance needs outbound HTTPS to FuelIX (default security-group egress
+  allows it). Verify the key loaded: `journalctl -u note-api -b | grep -i
+  'ssm\|AccessDenied'` should be empty, and
+  `curl -s -X POST localhost:8080/notes/<slug>/summary` should not say
+  `summary not configured`.
 - Chicken-and-egg: the endpoint comes from step 8. Do step 8 first, then set
   `ALLOW_ORIGIN` and `sudo systemctl restart note-api`.
 
@@ -306,6 +375,7 @@ rejected (400) ✓
 | Symptom | Cause |
 | ------- | ----- |
 | `NoCredentialProviders` in the log | Instance profile not attached at launch |
+| Summary returns `503 summary not configured` on EC2 | Key fetch failed — `journalctl -u note-api -b` for the `ssm get-parameter` error: `AccessDeniedException` (policy/ARN/region mismatch), `ParameterNotFound`, or `fetch-fuelix-key.sh` not installed |
 | `exec format error` | `GOARCH` doesn't match the instance architecture |
 | Every request `AccessDenied` | Policy resource is the bucket ARN, not `bucket/notes/*` |
 | Every note reads blank | IAM policy missing `s3:GetObject` — check `journalctl` for the AccessDenied warning |

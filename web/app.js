@@ -82,4 +82,39 @@ header.addEventListener("keydown", (e) => {
   }
 });
 
+// Summary: flush any pending edit first (the server summarizes the saved
+// note), then ask the API, which proxies to FuelIX so no key lives in this file.
+const summaryBtn = document.getElementById("summary-btn");
+const summaryBox = document.getElementById("summary");
+const summaryText = document.getElementById("summary-text");
+
+function showSummary(text, isError) {
+  summaryText.textContent = text;
+  summaryBox.classList.toggle("error", isError);
+  summaryBox.hidden = false;
+}
+
+async function summarize() {
+  summaryBtn.disabled = true;
+  showSummary("Summarizing…", false);
+  try {
+    clearTimeout(timer);
+    await save();
+    const res = await fetch(`${API_BASE}/notes/${slug}/summary`, { method: "POST" });
+    if (!res.ok) {
+      const msg = res.status === 400 ? "Nothing to summarize yet." : "Couldn't generate a summary.";
+      showSummary(msg, true);
+      return;
+    }
+    const data = await res.json();
+    showSummary(data.summary, false);
+  } catch (_) {
+    showSummary("Couldn't generate a summary.", true);
+  } finally {
+    summaryBtn.disabled = false;
+  }
+}
+
+summaryBtn.addEventListener("click", summarize);
+
 load();

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -21,8 +22,9 @@ func validSlug(s string) bool { return slugRe.MatchString(s) }
 // API holds the request handlers and their dependencies.
 type API struct {
 	store       Store
-	webDir      string // directory holding index.html + static assets
-	allowOrigin string // CORS allow-origin; empty disables CORS (local, same-origin)
+	webDir      string     // directory holding index.html + static assets
+	allowOrigin string     // CORS allow-origin; empty disables CORS (local, same-origin)
+	summarizer  Summarizer // nil when FuelIX isn't configured; summary then returns 503
 }
 
 // routes builds the mux and wraps it with CORS. Go 1.22+ ServeMux method+path
@@ -32,6 +34,7 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("GET /notes/{slug}", a.getNote)
 	mux.HandleFunc("PUT /notes/{slug}", a.putNote)
 	mux.HandleFunc("PATCH /notes/{slug}", a.renameNote)
+	mux.HandleFunc("POST /notes/{slug}/summary", a.summarizeNote)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(a.webDir))))
 	mux.HandleFunc("GET /", a.serveApp)
 	return a.withCORS(mux)
@@ -120,6 +123,37 @@ func (a *API) renameNote(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// summarizeNote summarizes the saved note via the configured Summarizer. It
+// reads from the store rather than the request body so the endpoint can't be
+// used as a general-purpose LLM proxy.
+func (a *API) summarizeNote(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if !validSlug(slug) {
+		http.Error(w, "invalid slug", http.StatusBadRequest)
+		return
+	}
+	if a.summarizer == nil {
+		http.Error(w, "summary not configured", http.StatusServiceUnavailable)
+		return
+	}
+	text, err := a.store.Get(r.Context(), slug)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(text) == "" {
+		http.Error(w, "note is empty", http.StatusBadRequest)
+		return
+	}
+	summary, err := a.summarizer.Summarize(r.Context(), text)
+	if err != nil {
+		log.Printf("summarize %q: %v", slug, err)
+		http.Error(w, "summary failed", http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]string{"summary": summary})
+}
+
 // serveApp handles everything not matched by the API routes: the root redirect,
 // the pad page for a slug, and 404s. Static assets are served by the /static/
 // file server registered in routes. This is a local convenience; on S3 the
@@ -146,7 +180,7 @@ func (a *API) withCORS(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", a.allowOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, PATCH, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, PATCH, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

@@ -50,6 +50,9 @@ concurrent editing is ever needed, move the note store to DynamoDB — the API's
   store.go       Store interface + ErrNotFound — the persistence seam
   store_fs.go    filesystem backend (local dev): data/{slug}.txt
   store_s3.go    S3 backend (aws-sdk-go-v2): notes/{slug}.txt
+  summarizer.go  Summarizer interface + FuelIX (OpenAI-compatible) client; backs
+                 POST /notes/{slug}/summary (FUELIX_API_KEY/BASE_URL/MODEL env;
+                 key stays server-side, nil summarizer → 503)
   *_test.go      handler contract, FSStore, and S3Store error-mapping tests
 /web/            Static frontend (deployed to the S3 site bucket)
   index.html     the pad (single <textarea>)
@@ -103,7 +106,10 @@ URL at the local Go server.
 
 - **EC2:** Amazon Linux; security group opens only the API port (+ SSH for admin);
   attach an **IAM instance profile** granting least-privilege
-  `s3:GetObject` / `s3:PutObject` scoped to the notes bucket only.
+  `s3:GetObject` / `s3:PutObject` scoped to the notes bucket only. The FuelIX
+  key lives in SSM Parameter Store (`/note-api/fuelix-api-key`, SecureString);
+  a second policy grants the role `ssm:GetParameter` on that one parameter and
+  `infra/fetch-fuelix-key.sh` loads it into a tmpfs env file at service start.
 - **S3:** one **private** notes bucket; one static-website frontend bucket (configure
   Block Public Access appropriately, or front it with CloudFront + Origin Access
   Control).
