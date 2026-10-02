@@ -11,3 +11,11 @@ notems
 
 # OS / editor cruft
 .DS_Store
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log

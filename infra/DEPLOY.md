@@ -1,5 +1,9 @@
 # Deploying to AWS (EC2 + S3) — console walkthrough
 
+> **Terraform is now the source of truth** for this stack (see
+> [`terraform/README.md`](terraform/README.md)). The console steps below remain
+> as a reference for what each resource is and why.
+
 Target architecture, per `CLAUDE.md`:
 
 ```

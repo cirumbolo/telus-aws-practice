@@ -58,7 +58,9 @@ concurrent editing is ever needed, move the note store to DynamoDB — the API's
   index.html     the pad (single <textarea>)
   app.js         load-on-open + debounced auto-save (fetch); API_BASE seam
   styles.css     minimalist, full-viewport textarea
-/infra/          DEPLOY.md — AWS console walkthrough (no IaC yet)
+/infra/          DEPLOY.md — AWS console walkthrough (reference)
+  terraform/     IaC for the live stack (imported); S3 remote state
+  bootstrap/     one-time config creating the state bucket
 README.md
 ```
 
